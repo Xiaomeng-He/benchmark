@@ -151,23 +151,7 @@ def loss_function(act_predictions,
                   beta=0.999,
                   gamma=2,
                   class_freq=None):
-    """
-    Calculate cross-entropy loss for activity label prediction.
-
-    Parameters
-    ----------
-    act_predictions: tensor
-        shape: (batch_size, suffix_len, num_act)
-    act_tgt: tensor
-        shape: (batch_size, suffix_len)
-
-    Returns
-    -------  
-    loss: tensor
-        scalar, representing losses averaged over each loss element in the batch
-
-    """
-
+                            
     if loss_mode == 'base':
         act_criterion = nn.CrossEntropyLoss(ignore_index=0)
     else:
@@ -252,6 +236,8 @@ class EarlyStopper:
     patience : int
         Number of epochs with no significant improvement in validation metrics 
         before stopping.
+    dalta : float
+        Loss improvement regarded as significant.
 
     Attributes
     ----------
@@ -305,14 +291,6 @@ class EarlyStopper:
         return False
 
 def init_weights_uni(m):
-    """
-    Initialize model parameters uniformly in the range [-0.08, 0.08].
-
-    Parameters
-    ----------
-    m : torch.nn.Module
-        An instance of model.
-    """
     for name, param in m.named_parameters():
         if 'weight' in name:
             nn.init.uniform_(param.data, -0.08, 0.08)
