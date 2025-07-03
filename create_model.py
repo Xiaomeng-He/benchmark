@@ -66,7 +66,6 @@ class Transformer(nn.Module):
                 trace_prefix_act,
                 trace_prefix_time):
         
-        # process input
         act_embed = self.embedding(trace_prefix_act) * math.sqrt(self.d_model)
         time_proj = self.time_proj(trace_prefix_time)
         x = torch.cat([act_embed, time_proj], dim=-1)
@@ -74,10 +73,11 @@ class Transformer(nn.Module):
         assert self.d_model == x.size(-1), "d_model must be equal to the last dimension of x"
         x = self.positional_encoding(x)
 
-        # create masking
+        # pad mask
         padding_mask = (trace_prefix_act == 0)
         padding_mask = torch.where(padding_mask, float('-inf'), 0.0)
 
+        # causal mask
         causal_mask = nn.Transformer.generate_square_subsequent_mask(self.prefix_len).to(trace_prefix_act.device)
 
         # pass x to transformer
@@ -119,18 +119,18 @@ class LSTM(nn.Module):
                 trace_prefix_act,
                 trace_prefix_time):
         
-        # process input
         act_embed = self.embedding(trace_prefix_act)
         time_proj = self.time_proj(trace_prefix_time)
         x = torch.cat([act_embed, time_proj], dim=-1) # shape: (batch_size, prefix_len, d_embed * 2)
         
+        # pass x to lstm
         outputs, _ = self.lstm(x) # shape: (batch_size, prefix_len, hidden_size (*2 if bidirectional))
 
         # make predictions
         predictions = self.classifier(outputs) # shape: (batch_size, prefix_len, num_act)
 
         return predictions
-    
+
 class xLSTM(nn.Module):
 
     def __init__(self,
@@ -153,7 +153,8 @@ class xLSTM(nn.Module):
         
         slstmconfig = sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
-                    backend="cuda",
+                    backend= 'vanilla',
+                    # "cuda" if torch.cuda.is_available() else 'vanilla'
                     num_heads=4,
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",
@@ -179,12 +180,13 @@ class xLSTM(nn.Module):
                 trace_prefix_act,
                 trace_prefix_time):
         
-        # process input
+        
         act_embed = self.embedding(trace_prefix_act)
         time_proj = self.time_proj(trace_prefix_time)
         x = torch.cat([act_embed, time_proj], dim=-1) # shape: (batch_size, prefix_len, d_embed * 2)
         
-        outputs = self.xlstm_stack(x) # shape: (batch_size, prefix_len, hidden_size (*2 if bidirectional))
+        # pass x to xlstm
+        outputs = self.xlstm_stack(x) # shape: (batch_size, prefix_len, d_embed*2)
 
         # make predictions
         predictions = self.classifier(outputs) # shape: (batch_size, prefix_len, num_act)
