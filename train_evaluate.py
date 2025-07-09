@@ -151,12 +151,30 @@ def loss_function(act_predictions,
                   beta=0.999,
                   gamma=2,
                   class_freq=None):
-                            
+    """
+    Calculate cross-entropy loss for activity label prediction.
+
+    Parameters
+    ----------
+    act_predictions: tensor
+        shape: (batch_size, suffix_len, num_act)
+    act_tgt: tensor
+        shape: (batch_size, suffix_len)
+
+    Returns
+    -------  
+    loss: tensor
+        scalar, representing losses averaged over each loss element in the batch
+
+    """
+
     if loss_mode == 'base':
         act_criterion = nn.CrossEntropyLoss(ignore_index=0)
-    else:
-        act_criterion = FocalLoss(beta=beta, gamma=gamma, class_freq=class_freq)
-
+    elif loss_mode == 'focal':
+        act_criterion = CEFocalLoss(beta=beta, gamma=gamma, class_freq=class_freq)
+    elif loss_mode == 'weighted':
+        act_criterion = WeightedFocalLoss(gamma=gamma, class_freq=class_freq)
+    
     act_predictions = act_predictions.view(-1, act_predictions.size(-1)) # shape: (batch_size * seq_length, num_act)
     act_tgt = act_tgt.view(-1) # shape: (batch_size * seq_length)
 
@@ -164,7 +182,52 @@ def loss_function(act_predictions,
 
     return loss
 
-class FocalLoss(nn.Module):
+class WeightedFocalLoss(nn.Module):
+    def __init__(self, gamma, class_freq):
+        super().__init__()
+        self.gamma = gamma # hyperparameter for focal loss
+        self.ce = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        self.register_buffer('alpha', self.get_alpha(class_freq))
+
+    def get_alpha(self, class_freq):
+
+        original_zero_mask = class_freq == 0
+
+        total_freq = class_freq.sum()
+        valid_class = (class_freq > 0).sum().float()
+
+        class_freq = torch.where(original_zero_mask, torch.ones_like(class_freq), class_freq)  # avoid zero division
+        inv_class_freq = total_freq / class_freq
+        
+        inv_class_freq = inv_class_freq / inv_class_freq.sum() * valid_class
+        inv_class_freq = torch.where(original_zero_mask, torch.zeros_like(inv_class_freq), inv_class_freq)
+
+        return inv_class_freq
+
+    def forward(self, inputs, targets):
+
+        ce_loss = self.ce(inputs, targets) 
+
+        if ce_loss.dim() > 1:
+            ce_loss = ce_loss.flatten() # shape: (batch_size * seq_len)
+
+        if targets.dim() > 1:
+            targets = targets.flatten()  # shape: (batch_size * seq_len)
+        
+        p_t = torch.exp(-ce_loss)  # shape: (batch_size * seq_len)
+        
+        focal_term = (1 - p_t) ** self.gamma
+        
+        alpha = self.alpha.to(targets.device)
+        alpha_t = alpha.gather(0, targets)
+        loss = alpha_t * focal_term * ce_loss
+
+        mask = targets != 0 # when target is 0, loss is still calculated, which is 0
+        loss = loss[mask]
+
+        return loss.mean()
+
+class CEFocalLoss(nn.Module):
     def __init__(self, beta, gamma, class_freq=None):
         super().__init__()
         self.beta = beta # hyperparameter for effective number hyperparameter
@@ -201,10 +264,14 @@ class FocalLoss(nn.Module):
         focal_term = (1 - p_t) ** self.gamma
         
         if self.alpha is not None:
-            alpha_t = self.alpha.gather(0, targets)
+            alpha = self.alpha.to(targets.device)
+            alpha_t = alpha.gather(0, targets)
             loss = alpha_t * focal_term * ce_loss
         else:
             loss = focal_term * ce_loss
+
+        mask = targets != 0 # when target is 0, loss is still calculated, which is 0
+        loss = loss[mask]
 
         return loss.mean()
 
@@ -236,8 +303,6 @@ class EarlyStopper:
     patience : int
         Number of epochs with no significant improvement in validation metrics 
         before stopping.
-    dalta : float
-        Loss improvement regarded as significant.
 
     Attributes
     ----------
@@ -291,6 +356,14 @@ class EarlyStopper:
         return False
 
 def init_weights_uni(m):
+    """
+    Initialize model parameters uniformly in the range [-0.08, 0.08].
+
+    Parameters
+    ----------
+    m : torch.nn.Module
+        An instance of model.
+    """
     for name, param in m.named_parameters():
         if 'weight' in name:
             nn.init.uniform_(param.data, -0.08, 0.08)
