@@ -93,7 +93,7 @@ def get_discard_case_list(df,
     # get the list of cases that start before and end after the splitting point
     discard_cases = case_start_stop_times[
         (case_start_stop_times['Start'] < train_test_split_time) & 
-        (case_start_stop_times['End'] > train_test_split_time)]
+        (case_start_stop_times['End'] >= train_test_split_time)]
     discard_case_list = discard_cases[case_id].tolist()
     
     return discard_case_list
